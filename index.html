@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>UNUAFI – Create / Join</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <style>
+    body{background:#000;color:#D8BBFC;font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+    .card{background:#111;padding:28px;border-radius:12px;box-shadow:0 0 10px #D8BBFC;width:90%;max-width:420px;text-align:center}
+    h1{margin:0 0 12px}
+    p{margin:0 0 18px;color:#bbb}
+    input,button{width:100%;padding:12px;border-radius:8px;border:2px solid #D8BBFC;font-size:16px;margin:8px 0}
+    input{background:#D8BBFC;color:#000;border:none}
+    button{background:transparent;color:#D8BBFC;cursor:pointer}
+    button:hover{background:#D8BBFC;color:#000}
+    .row{display:flex;gap:10px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🎬 UNUAFI</h1>
+    <p>Create a room or join with a code</p>
+
+    <div class="row">
+      <button id="createBtn">Create Room</button>
+    </div>
+
+    <input id="roomInput" placeholder="Enter Room Code to Join" />
+    <button id="joinBtn">Join Room</button>
+
+    <small style="color:#777;display:block;margin-top:14px;">&copy; 2025 UNUAFI</small>
+  </div>
+
+  <script type="module">
+    // 👉 Create: random code and go to room.html
+    document.getElementById('createBtn').onclick = () => {
+      const roomId = Math.random().toString(36).slice(2,8);
+      alert("Room created: " + roomId);
+      location.href = `room.html?room=${roomId}`;
+    };
+
+    // 👉 Join: use input code and go to room.html
+    document.getElementById('joinBtn').onclick = () => {
+      const room = document.getElementById('roomInput').value.trim();
+      if(!room){ alert("Enter a valid room code"); return; }
+      location.href = `room.html?room=${room}`;
+    };
+  </script>
+</body>
+</html>

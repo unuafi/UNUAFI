@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>UNUAFI – Room</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<style>
+  body{background:#000;color:#D8BBFC;font-family:Arial,sans-serif;margin:0;padding:16px}
+  h2{text-align:center;margin-top:6px}
+  .panel{max-width:960px;margin:0 auto}
+  .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;margin:12px 0 16px}
+  input[type="text"],input[type="file"],button{padding:10px;border-radius:8px;font-size:15px}
+  input[type="text"]{width:360px;background:#D8BBFC;color:#000;border:none}
+  input[type="file"]{background:#D8BBFC;color:#000;border:none}
+  button{background:transparent;color:#D8BBFC;border:2px solid #D8BBFC;cursor:pointer}
+  button:hover{background:#D8BBFC;color:#000}
+  .warn{color:#ff9; text-align:center; margin:8px 0}
+  iframe, video{width:100%;max-width:960px;height:540px;border:3px solid #D8BBFC;border-radius:10px;background:#000}
+  .pill{border:1px dashed #D8BBFC;padding:6px 10px;border-radius:999px;display:inline-block;margin:4px 0}
+</style>
+</head>
+<body>
+  <div class="panel">
+    <h2>🎥 Watch Together</h2>
+    <p class="pill" id="roomTag">Room: —</p>
+
+    <!-- Controls -->
+    <div class="bar">
+      <input id="ytUrl" type="text" placeholder="Paste YouTube URL (e.g., https://youtu.be/XXXXXXXXXXX)" />
+      <button id="shareYt">Share YouTube</button>
+      <input id="localFile" type="file" accept="video/*" />
+      <button id="micBtn">🎤 Voice (coming soon)</button>
+    </div>
+
+    <div class="warn" id="localHint" style="display:none;"></div>
+
+    <!-- Players -->
+    <div id="ytWrap" style="display:none;">
+      <div id="ytPlayer"></div>
+    </div>
+    <video id="localPlayer" controls style="display:none;"></video>
+  </div>
+
+  <!-- YouTube Iframe API -->
+  <script src="https://www.youtube.com/iframe_api"></script>
+
+  <!-- Firebase -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getDatabase, ref, set, onValue, update, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+    // ✅ Your Firebase config
+    const firebaseConfig = {
+      apiKey: "AIzaSyC4aw6I1tCACuHNGQNm4gI9zmKZYG5m524",
+      authDomain: "unuafi-c01a7.firebaseapp.com",
+      databaseURL: "https://unuafi-c01a7-default-rtdb.firebaseio.com",
+      projectId: "unuafi-c01a7",
+      storageBucket: "unuafi-c01a7.appspot.com",
+      messagingSenderId: "99364425273",
+      appId: "1:99364425273:web:a0d630f2ee52d9f9d847e8"
+    };
+
+    // ✅ App + DB
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    // ✅ Room + client
+    const params = new URLSearchParams(location.search);
+    const roomId = params.get('room');
+    document.getElementById('roomTag').textContent = "Room: " + roomId;
+    const clientId = Math.random().toString(36).slice(2,10);
+
+    // DB refs
+    const stateRef  = ref(db, `rooms/${roomId}/state`);  // {type: 'yt'|'local', videoId|localName|duration}
+    const syncRef   = ref(db, `rooms/${roomId}/sync`);   // {action:'play'|'pause'|'seek', time:number, sender, ts}
+    const pingRef   = ref(db, `rooms/${roomId}/clients/${clientId}`);
+
+    // Presence (optional)
+    update(pingRef, { online:true, ts: serverTimestamp() });
+
+    // UI Nodes
+    const ytUrl = document.getElementById('ytUrl');
+    const shareYtBtn = document.getElementById('shareYt');
+    const localInput = document.getElementById('localFile');
+    const localPlayer = document.getElementById('localPlayer');
+    const ytWrap = document.getElementById('ytWrap');
+    const localHint = document.getElementById('localHint');
+
+    // —— Helpers ——
+    const extractYouTubeID = (url) => {
+      const m = url.match(/(?:youtube\.com.*(?:v=|embed\/)|youtu\.be\/)([^&#?\n]+)/);
+      return m ? m[1] : null;
+    };
+
+    let applyingRemote = false; // feedback loop guard
+    let player;                // YT player
+    let currentType = null;    // 'yt' | 'local'
+
+    // —— Share YouTube ——
+    shareYtBtn.onclick = async () => {
+      const id = extractYouTubeID(ytUrl.value.trim());
+      if(!id){ alert("Invalid YouTube URL"); return; }
+      await set(stateRef, { type:'yt', videoId:id });
+    };
+
+    // —— Local file select ——
+    localInput.onchange = async (e) => {
+      const file = e.target.files[0];
+      if(!file) return;
+      const url = URL.createObjectURL(file);
+      localPlayer.src = url;
+      await localPlayer.load();
+      // after metadata:
+      localPlayer.onloadedmetadata = async () => {
+        await set(stateRef, { type:'local', localName:file.name, duration: Math.round(localPlayer.duration || 0) });
+        showLocal();
+      };
+    };
+
+    // —— Switch UI to YT ——
+    function showYT(videoId){
+      currentType = 'yt';
+      localPlayer.pause();
+      localPlayer.style.display = 'none';
+      ytWrap.style.display = 'block';
+      localHint.style.display = 'none';
+
+      // If player exists, load by id
+      if(player){
+        player.loadVideoById(videoId);
+      }else{
+        // Wait for API global callback
+        window.onYouTubeIframeAPIReady = () => {
+          player = new YT.Player('ytPlayer', {
+            height: '540',
+            width: '960',
+            videoId,
+            playerVars:{ autoplay:1, rel:0, modestbranding:1 },
+            events: {
+              'onReady': onYTReady,
+              'onStateChange': onYTState
+            }
+          });
+        };
+        // If API already loaded, call the callback manually
+        if(window.YT && window.YT.Player){
+          window.onYouTubeIframeAPIReady();
+        }
+      }
+    }
+
+    function onYTReady(){
+      // Seek events via polling (YT doesn’t fire seeked reliably)
+      setInterval(() => {
+        if(currentType!=='yt' || applyingRemote) return;
+        // No-op: we only push seek on explicit UI state changes
+      }, 1000);
+    }
+
+    function onYTState(e){
+      if(applyingRemote) return;
+      const t = player.getCurrentTime ? player.getCurrentTime() : 0;
+      if(e.data === YT.PlayerState.PLAYING){
+        pushSync('play', t);
+      }else if(e.data === YT.PlayerState.PAUSED){
+        pushSync('pause', t);
+      }else if(e.data === YT.PlayerState.ENDED){
+        pushSync('pause', 0);
+      }
+    }
+
+    // Manual seek by user (keyboard/drag): we’ll catch via periodic check on pause->play transition
+    // Provide a small buttonless API: whenever user clicks progress (not easily captured), we add a listener:
+    document.addEventListener('keydown', (ev)=>{
+      if(currentType!=='yt' || !player) return;
+      if(ev.code==='ArrowRight' || ev.code==='ArrowLeft'){
+        // After a tiny delay, broadcast the new time
+        setTimeout(()=>{
+          pushSync('seek', player.getCurrentTime());
+        }, 200);
+      }
+    });
+
+    // —— Switch UI to Local ——
+    function showLocal(expect = null){
+      currentType = 'local';
+      ytWrap.style.display = 'none';
+      localPlayer.style.display = 'block';
+      // show hint if file not loaded or mismatch
+      if(expect){
+        const ok = localPlayer.duration && Math.round(localPlayer.duration) === (expect.duration||0);
+        localHint.style.display = ok ? 'none' : 'block';
+        if(!ok){
+          localHint.innerHTML = `⚠️ Please choose the same file: <b>${expect.localName||''}</b> (duration ≈ ${expect.duration||'?' }s)`;
+        }
+      }else{
+        // if user did not choose yet
+        if(!localPlayer.src){
+          localHint.style.display = 'block';
+          localHint.textContent = '⚠️ Choose a local video file to sync.';
+        }else{
+          localHint.style.display = 'none';
+        }
+      }
+    }
+
+    // —— Push sync action to DB ——
+    async function pushSync(action, time){
+      await set(syncRef, { action, time: Math.max(0, Math.round(time*1000)/1000), sender:clientId, ts: Date.now() });
+    }
+
+    // —— Apply remote action ——
+    onValue(syncRef, (snap)=>{
+      const data = snap.val();
+      if(!data) return;
+      if(data.sender === clientId) return; // ignore self
+
+      applyingRemote = true;
+      try{
+        if(currentType==='yt' && player){
+          if(data.action==='play'){
+            player.seekTo(data.time, true);
+            player.playVideo();
+          }else if(data.action==='pause'){
+            player.seekTo(data.time, true);
+            player.pauseVideo();
+          }else if(data.action==='seek'){
+            player.seekTo(data.time, true);
+          }
+        }else if(currentType==='local'){
+          if(!isNaN(data.time)) localPlayer.currentTime = data.time;
+          if(data.action==='play') localPlayer.play().catch(()=>{});
+          if(data.action==='pause') localPlayer.pause();
+        }
+      }finally{
+        setTimeout(()=> applyingRemote=false, 120);
+      }
+    });
+
+    // —— Listen state changes (switch media) ——
+    onValue(stateRef, (snap)=>{
+      const st = snap.val();
+      if(!st) return;
+
+      if(st.type==='yt'){
+        showYT(st.videoId);
+      }else if(st.type==='local'){
+        showLocal(st);
+      }
+    });
+
+    // —— Local player events -> sync ——
+    localPlayer.addEventListener('play', ()=>{
+      if(applyingRemote || currentType!=='local') return;
+      pushSync('play', localPlayer.currentTime);
+    });
+    localPlayer.addEventListener('pause', ()=>{
+      if(applyingRemote || currentType!=='local') return;
+      pushSync('pause', localPlayer.currentTime);
+    });
+    localPlayer.addEventListener('seeked', ()=>{
+      if(applyingRemote || currentType!=='local') return;
+      pushSync('seek', localPlayer.currentTime);
+    });
+
+    // —— YT manual controls: add small buttons (optional) —— 
+    // (YouTube UI clicks will trigger onStateChange already; seeks mostly handled by seek push via keyboard hint above)
+  </script>
+</body>
+</html>
